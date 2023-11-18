@@ -12,7 +12,7 @@
 # ./odoo-install
 ################################################################################
 
-OE_USER="raneen"
+OE_USER="odoo"
 OE_HOME="/opt/${OE_USER}"
 OE_HOME_SERVER="${OE_HOME}/${OE_USER}-server"
 OE_HOME_VENV="${OE_HOME}/${OE_USER}-venv"
