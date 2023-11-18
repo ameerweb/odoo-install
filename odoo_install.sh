@@ -186,20 +186,13 @@ fi
 echo -e "\n---- Create custom module directory ----"
 sudo su $OE_USER -c "mkdir $OE_HOME/custom"
 sudo su $OE_USER -c "mkdir $OE_HOME/custom/addons"
-
+sudo su $OE_USER -c "mkdir $OE_HOME/backups"
 
 echo -e "\n---- Setting permissions on home folder ----"
 sudo chown -R $OE_USER:$OE_USER $OE_HOME
 sudo chown -R $OE_USER:$OE_USER $OE_HOME/*
 
-echo -e "\n---- Create backups directory ----"
-sudo su $OE_USER -c "mkdir $OE_HOME/backups"
-
-echo -e "\n---- Setting permissions on home folder ----"
-sudo chown -R $OE_USER:$OE_USER $OE_HOME/backups
-
 echo -e "* Create server config file"
-
 
 sudo touch /etc/${OE_CONFIG}.conf
 echo -e "* Creating server config file"
