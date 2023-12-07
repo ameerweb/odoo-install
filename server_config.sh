@@ -59,6 +59,9 @@ sudo npm install -g rtlcss
 #--------------------------------------------------
 sudo dpkg -i wkhtmltox_0.12.5-1.jammy_amd64.deb
 
+sudo ln -s /usr/local/bin/wkhtmltopdf /usr/bin
+sudo ln -s /usr/local/bin/wkhtmltoimage /usr/bin
+
 #--------------------------------------------------
 # Install Nginx 
 #--------------------------------------------------
