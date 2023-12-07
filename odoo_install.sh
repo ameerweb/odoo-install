@@ -11,7 +11,6 @@
 # sudo chmod +x odoo-install.sh
 # ./odoo-install
 ################################################################################
-
 OE_USER="odoo"
 OE_HOME="/opt/${OE_USER}"
 OE_HOME_SERVER="${OE_HOME}/${OE_USER}-server"
@@ -41,34 +40,25 @@ ENABLE_SSL="True"
 ADMIN_EMAIL="odoo@example.com"
 # 
 INIT_FILE=/etc/systemd/system/$OE_CONFIG.service
-
-
 echo -e "\n---- Creating the ODOO PostgreSQL User  ----"
 sudo su - postgres -c "createuser -s $OE_USER" 2> /dev/null || true
-
 echo -e "\n---- Configure python venv  ----"
 sudo python3 -m venv $OE_HOME_VENV
 sudo $OE_HOME_VENV/bin/pip3 install wheel
-
 echo -e "\n---- Install python packages/requirements ----"
 sudo $OE_HOME_VENV/bin/pip3 install -r https://github.com/odoo/odoo/raw/${OE_VERSION}/requirements.txt
-
-
 echo -e "\n---- Create ODOO system user ----"
 sudo adduser --system --quiet --shell=/bin/bash --home=$OE_HOME --gecos 'ODOO' --group $OE_USER
 #The user should also be added to the sudo'ers group.
 sudo adduser $OE_USER sudo
-
 echo -e "\n---- Create Log directory ----"
 sudo mkdir /var/log/$OE_USER
 sudo chown $OE_USER:$OE_USER /var/log/$OE_USER
-
 #--------------------------------------------------
 # Install ODOO
 #--------------------------------------------------
 echo -e "\n==== Installing ODOO Server ===="
 sudo git clone --depth 1 --branch $OE_VERSION https://www.github.com/odoo/odoo $OE_HOME_SERVER
-
 # TODO: if [ $IS_ENTERPRISE = "True" ]; section NEED to be updated 
 if [ $IS_ENTERPRISE = "True" ]; then
     # Odoo Enterprise install!
@@ -77,7 +67,6 @@ if [ $IS_ENTERPRISE = "True" ]; then
     sudo ln -s /usr/bin/nodejs /usr/bin/node
     sudo su $OE_USER -c "mkdir $OE_HOME/enterprise"
     sudo su $OE_USER -c "mkdir $OE_HOME/enterprise/addons"
-
     GITHUB_RESPONSE=$(sudo git clone --depth 1 --branch $OE_VERSION https://www.github.com/odoo/enterprise "$OE_HOME/enterprise/addons" 2>&1)
     while [[ $GITHUB_RESPONSE == *"Authentication"* ]]; do
         echo "------------------------WARNING------------------------------"
@@ -88,26 +77,21 @@ if [ $IS_ENTERPRISE = "True" ]; then
         echo " "
         GITHUB_RESPONSE=$(sudo git clone --depth 1 --branch $OE_VERSION https://www.github.com/odoo/enterprise "$OE_HOME/enterprise/addons" 2>&1)
     done
-
     echo -e "\n---- Added Enterprise code under $OE_HOME/enterprise/addons ----"
     echo -e "\n---- Installing Enterprise specific libraries ----"
     sudo -H pip3 install num2words ofxparse dbfread ebaysdk firebase_admin pyOpenSSL
     sudo npm install -g less
     sudo npm install -g less-plugin-clean-css
 fi
-
 echo -e "\n---- Create custom module directory ----"
 sudo mkdir /var/log/$OE_USER
 sudo mkdir $OE_HOME/custom
 sudo mkdir $OE_HOME/custom/addons
 sudo mkdir $OE_HOME/backups
-
 echo -e "\n---- Setting permissions on home folder ----"
 sudo chown -R $OE_USER:$OE_USER $OE_HOME
 sudo chown -R $OE_USER:$OE_USER $OE_HOME/*
-
 echo -e "* Create server config file"
-
 sudo touch /etc/${OE_CONFIG}.conf
 echo -e "* Creating server config file"
 sudo su root -c "printf '[options] \n; This is the password that allows database operations:\n' >> /etc/${OE_CONFIG}.conf"
@@ -130,18 +114,15 @@ else-
 fi
 sudo chown $OE_USER:$OE_USER /etc/${OE_CONFIG}.conf
 sudo chmod 640 /etc/${OE_CONFIG}.conf
-
 echo -e "* Create startup file"
 sudo su root -c "echo '#!/bin/sh' >> $OE_HOME_SERVER/start.sh"
 sudo su root -c "echo 'sudo -u $OE_USER $OE_HOME_SERVER/odoo-bin --config=/etc/${OE_CONFIG}.conf' >>  $OE_HOME_SERVER/start.sh"
 sudo chmod 755 $OE_HOME_SERVER/start.sh
-
 #--------------------------------------------------
 # Adding ODOO as a deamon (initscript)
 #--------------------------------------------------
 sudo touch $INIT_FILE
 sudo chmod 0700 $INIT_FILE
-
 echo -e "* Create systemd unit file"
 echo '[Unit]' >> $INIT_FILE
 echo 'Description=ODOO Application Server' >> $INIT_FILE
@@ -159,18 +140,15 @@ echo "ExecStart=$OE_HOME_VENV/bin/python3 $OE_HOME_SERVER/odoo-bin -c /etc/$OE_C
 echo 'StandardOutput=journal+console' >> $INIT_FILE
 echo '[Install]' >> $INIT_FILE
 echo 'WantedBy=multi-user.target' >> $INIT_FILE
-
 echo -e "* Enabling Systemd File"
 sudo systemctl enable $INIT_FILE
-
 echo -e "-- Starting ODOO Server --"
 sudo systemctl start $OE_CONFIG.service
-
 #--------------------------------------------------
 # Install Nginx if needed
 #--------------------------------------------------
 if [ $INSTALL_NGINX = "True" ]; then
-  cat <<EOF > ~/odoo
+  cat <<EOF > /opt/$OE_HOME
 server {
   listen 80;
 
@@ -244,8 +222,7 @@ server {
   }
 }
 EOF
-
-  sudo mv ~/odoo /etc/nginx/sites-available/$WEBSITE_NAME
+  sudo mv /opt/$OE_HOME /etc/nginx/sites-available/$WEBSITE_NAME
   sudo ln -s /etc/nginx/sites-available/$WEBSITE_NAME /etc/nginx/sites-enabled/$WEBSITE_NAME
   sudo rm /etc/nginx/sites-enabled/default
   sudo service nginx reload
@@ -254,7 +231,6 @@ EOF
 else
   echo "Nginx isn't installed due to choice of the user!"
 fi
-
 #--------------------------------------------------
 # Enable ssl with certbot
 #--------------------------------------------------
@@ -271,7 +247,6 @@ else
     echo "Website name is set as _. Cannot obtain SSL Certificate for _. You should use real website address."
   fi
 fi
-
 echo -e "* Starting Odoo Service"
 sudo systemctl start $OE_CONFIG.service
 echo "-----------------------------------------------------------"
