@@ -11,16 +11,16 @@
 # ./server_config.sh
 ################################################################################
 
-# Installs PostgreSQL V14 instead of defaults (e.g., V12 for Ubuntu 20/22) - this improves performance
-INSTALL_POSTGRESQL_FOURTEEN="True"
+# Installs PostgreSQL V16 instead of defaults (e.g., V12 for Ubuntu 20/22) - this improves performance
+INSTALL_POSTGRESQL_SIXTEEN="True"
+
+# Exit immediately if a command exits with a non-zero status
+set -e
 
 #--------------------------------------------------
 # Update Server
 #--------------------------------------------------
 echo -e "\n---- Update Server ----"
-# universe package is for Ubuntu 18.x
-sudo add-apt-repository universe
-sudo add-apt-repository "deb http://mirrors.kernel.org/ubuntu/ xenial main"
 sudo apt-get update
 sudo apt-get upgrade -y
 sudo apt-get install libpq-dev -y
@@ -29,12 +29,15 @@ sudo apt-get install libpq-dev -y
 # Install PostgreSQL Server
 #--------------------------------------------------
 echo -e "\n---- Install PostgreSQL Server ----"
-if [ $INSTALL_POSTGRESQL_FOURTEEN = "True" ]; then
-    echo -e "\n---- Installing postgreSQL V14 due to the user it's choice ----"
+if [ "$INSTALL_POSTGRESQL_SIXTEEN" = "True" ]; then
+    echo -e "\n---- Installing postgreSQL V16 due to the user's choice ----"
     sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
     sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
     sudo apt-get update
-    sudo apt-get install postgresql-14 -y
+    sudo apt-get install postgresql-16 -y
+    
+    # Install pgvector for Enterprise AI features (optional but recommended for modern Odoo)
+    # sudo apt-get install -y postgresql-16-pgvector
 else
     echo -e "\n---- Installing the default postgreSQL version based on Linux version ----"
     sudo apt-get install postgresql postgresql-server-dev-all -y
@@ -58,9 +61,34 @@ sudo npm install -g rtlcss
 # Install wkhtmltopdf
 #--------------------------------------------------
 echo -e "\n---- Installing wkhtmltopdf ----"
-sudo dpkg -i wkhtmltox_0.12.5-1.jammy_amd64.deb
-sudo ln -s /usr/local/bin/wkhtmltopdf /usr/bin
-sudo ln -s /usr/local/bin/wkhtmltoimage /usr/bin
+
+# Check if the operating system is Ubuntu 24.04
+if [[ $(lsb_release -r -s) == "24.04" ]]; then
+    echo "Detected Ubuntu 24.04 - Installing wkhtmltopdf from apt"
+    sudo apt-get install wkhtmltopdf -y
+else
+    echo "Detected older Ubuntu - Downloading wkhtmltopdf package"
+    # Logic for older Ubuntu versions (Focal, Jammy, etc.)
+    WKHTMLTOX_DEB="wkhtmltox_0.12.6.1-2.jammy_amd64.deb"
+    
+    # Adjust for Focal if needed, but defaulting to Jammy/Universal for recent LTS
+    if [[ $(lsb_release -c -s) == "focal" ]]; then
+         WKHTMLTOX_DEB="wkhtmltox_0.12.6-1.focal_amd64.deb"
+         wget "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/$WKHTMLTOX_DEB"
+    else
+         if [ ! -f "$WKHTMLTOX_DEB" ]; then
+             echo "Downloading $WKHTMLTOX_DEB..."
+             wget "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/$WKHTMLTOX_DEB"
+         fi
+    fi
+
+    sudo apt-get install ./$WKHTMLTOX_DEB -y
+fi
+
+# Link binaries
+sudo ln -s /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf || true
+sudo ln -s /usr/local/bin/wkhtmltoimage /usr/bin/wkhtmltoimage || true
+
 
 #--------------------------------------------------
 # Install Nginx 
@@ -76,6 +104,7 @@ sudo apt-get update -y
 sudo apt install snapd -y
 sudo snap install core; sudo snap refresh core
 sudo snap install --classic certbot
-sudo apt-get install python3-certbot-nginx -y
+# Link certbot command
+sudo ln -s /snap/bin/certbot /usr/bin/certbot || true
 
 echo -e "\n---- Server configuration finished successfully ----"
