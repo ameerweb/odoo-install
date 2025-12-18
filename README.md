@@ -1,18 +1,53 @@
-This shell script is used to install odoo in server.
+# Odoo Install Script
 
-This script is improved version of Yeneth666/InstallScript version:
- - Support System.d deamons instead of init.d.
- - Support Pyhton Virtual Enviroments (venv).
+This repository contains scripts to automate the installation of Odoo on a Linux server.
 
+## Scripts
 
+### 1. `odoo_install.sh` (Recommended)
 
-Usage:
-This script wreeten in windows maschen so in order to run this scripts without problems you will need to configure the followings:
-open the script in vim editor then :set fileformat=unix the :wq
+This is the main installation script, updated to be interactive and support a checkpoint system.
 
-In order to run the script in ubutu mashern:
+**Author:** abdalmola
 
-stdo chmod +x server_config.sh
+**Features:**
+- Interactive setup (asks for username, Odoo version, port, etc.)
+- Creates a system user and PostgreSQL user.
+- Clones Odoo from GitHub.
+- Installs all system and Python dependencies (including creating a virtual environment).
+- Sets up a systemd service.
+- Supports resuming installation if interrupted (Checkpoint system).
+
+**Usage:**
+
+1.  Make the script executable:
+    ```bash
+    chmod +x odoo_install.sh
+    ```
+2.  Run the script:
+    ```bash
+    ./odoo_install.sh
+    ```
+3.  Follow the on-screen prompts.
+
+### 2. `server_config.sh` (Optional)
+
+This script can be used to pre-configure the server, specifically if you need to install Nginx, Certbot (SSL), or a specific version of PostgreSQL (e.g., v16) before running the Odoo installer.
+
+**Note:** `odoo_install.sh` handles basic dependency installation, so this script is primarily useful for the Nginx/SSL setup part or if you want to ensure a specific server environment.
+
+**Usage:**
+
+```bash
+chmod +x server_config.sh
 sudo ./server_config.sh
+```
 
-Enjoy ^__^
+### 3. `odoo_install_old.sh`
+
+This is the previous version of the installation script (modified by Ameer Almughalis). It is kept for backup purposes.
+
+## Notes
+
+- Ensure you have `sudo` privileges before running the scripts.
+- `odoo_install.sh` assumes you are running on a fresh Ubuntu server (or compatible Debian-based system).
