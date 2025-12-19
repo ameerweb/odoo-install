@@ -62,28 +62,20 @@ sudo npm install -g rtlcss
 #--------------------------------------------------
 echo -e "\n---- Installing wkhtmltopdf ----"
 
-# Check if the operating system is Ubuntu 24.04
-if [[ $(lsb_release -r -s) == "24.04" ]]; then
-    echo "Detected Ubuntu 24.04 - Installing wkhtmltopdf from apt"
-    sudo apt-get install wkhtmltopdf -y
-else
-    echo "Detected older Ubuntu - Downloading wkhtmltopdf package"
-    # Logic for older Ubuntu versions (Focal, Jammy, etc.)
-    WKHTMLTOX_DEB="wkhtmltox_0.12.6.1-2.jammy_amd64.deb"
-    
-    # Adjust for Focal if needed, but defaulting to Jammy/Universal for recent LTS
-    if [[ $(lsb_release -c -s) == "focal" ]]; then
-         WKHTMLTOX_DEB="wkhtmltox_0.12.6-1.focal_amd64.deb"
-         wget "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/$WKHTMLTOX_DEB"
-    else
-         if [ ! -f "$WKHTMLTOX_DEB" ]; then
-             echo "Downloading $WKHTMLTOX_DEB..."
-             wget "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/$WKHTMLTOX_DEB"
-         fi
-    fi
+# Install the patched version of wkhtmltopdf.
+echo "Downloading and installing wkhtmltopdf with patched QT..."
 
-    sudo apt-get install ./$WKHTMLTOX_DEB -y
+WKHTMLTOX_DEB="wkhtmltox_0.12.6.1-2.jammy_amd64.deb"
+WKHTMLTOX_URL="https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/$WKHTMLTOX_DEB"
+
+# Download the package if it doesn't already exist.
+if [ ! -f "$WKHTMLTOX_DEB" ]; then
+    echo "Downloading $WKHTMLTOX_DEB..."
+    wget "$WKHTMLTOX_URL"
 fi
+
+# Install the package and its dependencies.
+sudo apt-get install -y ./$WKHTMLTOX_DEB
 
 # Link binaries
 sudo ln -s /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf || true
