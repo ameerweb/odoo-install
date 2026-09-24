@@ -2,7 +2,7 @@
 ################################################################################
 # Script for installing Odoo on Ubuntu 22.04 and 24.04
 # Author: Yenthe Van Ginneken
-# Modified by: Ameer Almughalis
+# Modified by: Ameer Haider
 #-------------------------------------------------------------------------------
 # This script will install Odoo on your Ubuntu server. It can install multiple Odoo instances
 # in one Ubuntu server because of unique ports, users, and Nginx upstreams.

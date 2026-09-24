@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ################################################################################
 # Script for configuring a server to run multiple isolated Odoo instances.
-# Modified by: Ameer Almughalis
+# Modified by: Ameer Haider
 #-------------------------------------------------------------------------------
 # Run this script once before odoo_install.sh.
 # How to use:
