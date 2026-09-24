@@ -1,125 +1,103 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ################################################################################
-# Script for Configuring server to install multiple Odoo instances.
+# Script for configuring a server to run multiple isolated Odoo instances.
 # Modified by: Ameer Almughalis
 #-------------------------------------------------------------------------------
-# This script will configure the Odoo requirements so 
-# odoo_install.sh can install multiple Odoo instances.
-#-------------------------------------------------------------------------------
+# Run this script once before odoo_install.sh.
 # How to use:
 # sudo chmod +x server_config.sh
 # sudo ./server_config.sh
 ################################################################################
 
-set -eo pipefail
-
-# Ensure script is run as root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: This script must be run as root or with sudo." >&2
-    exit 1
+set -euo pipefail
+# Ensure the script is run as root and on a supported Ubuntu release.
+if (( EUID != 0 )); then echo 'Run as root (sudo).' >&2; exit 1; fi
+. /etc/os-release
+if [[ ${ID:-} != ubuntu || ! ${VERSION_ID:-} =~ ^(22\.04|24\.04)$ ]]; then
+    echo 'Only Ubuntu 22.04 and 24.04 LTS are supported.' >&2; exit 1
 fi
-
-# Installs PostgreSQL V16 instead of defaults (e.g., V12 for Ubuntu 20/22) - this improves performance
-INSTALL_POSTGRESQL_SIXTEEN="True"
-
+export DEBIAN_FRONTEND=noninteractive
 #--------------------------------------------------
-# Update Server
+# Update server and install PostgreSQL, Python and build dependencies
 #--------------------------------------------------
-echo -e "\n---- Update Server ----"
 apt-get update
 apt-get upgrade -y
-apt-get install -y libpq-dev curl gnupg2 lsb-release ca-certificates software-properties-common
-
 #--------------------------------------------------
 # Install PostgreSQL Server
+# Install Python 3 and Build Dependencies
+# Install Node.js and npm for rtlcss
+# Install wkhtmltopdf from the Ubuntu package repository
 #--------------------------------------------------
-echo -e "\n---- Install PostgreSQL Server ----"
-if [ "$INSTALL_POSTGRESQL_SIXTEEN" = "True" ]; then
-    echo -e "\n---- Installing PostgreSQL V16 due to user's choice ----"
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg --yes
-    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-    apt-get update
-    apt-get install -y postgresql-16 postgresql-client-16
-else
-    echo -e "\n---- Installing standard PostgreSQL version ----"
-    apt-get install -y postgresql postgresql-contrib postgresql-server-dev-all
-fi
-
-# Ensure PostgreSQL service is enabled and running
-echo -e "\n---- Enabling and starting PostgreSQL service ----"
-systemctl enable postgresql
-systemctl start postgresql
-
-#--------------------------------------------------
-# Install Python3 & Build Dependencies
-#--------------------------------------------------
-echo -e "\n--- Installing Python 3, pip3, and system dependencies ---"
-apt-get install -y python3 python3-pip python3-cffi python3-dev python3-venv python3-wheel python3-setuptools \
-    git build-essential wget gdebi-core \
-    libxslt1-dev libzip-dev libldap2-dev libsasl2-dev libpng-dev libjpeg-dev libssl-dev libxml2-dev
-
-#--------------------------------------------------
-# Install Node.js & npm & rtlcss
-#--------------------------------------------------
-echo -e "\n---- Installing Node.js, npm, and rtlcss for LTR/RTL support ----"
-apt-get install -y nodejs npm
+apt-get install -y ca-certificates curl gnupg lsb-release postgresql postgresql-contrib \
+    python3 python3-pip python3-dev python3-venv python3-wheel python3-setuptools \
+    git sudo build-essential libpq-dev libxslt1-dev libzip-dev libldap2-dev libsasl2-dev \
+    libpng-dev libjpeg-dev libssl-dev libxml2-dev nodejs npm wkhtmltopdf logrotate
+# Ensure PostgreSQL is enabled before instances create their own roles.
+systemctl enable --now postgresql
+# Install Node.js rtlcss support for right-to-left layouts.
 npm install -g rtlcss
 
 #--------------------------------------------------
-# Install wkhtmltopdf
+# Install Nginx and Configure Global Websocket Map
+# Install current stable Nginx from the signed nginx.org repository
+# Ubuntu's apt install nginx can provide the distribution's 1.24 build.
 #--------------------------------------------------
-echo -e "\n---- Installing wkhtmltopdf ----"
-WKHTMLTOX_DEB="wkhtmltox_0.12.6.1-2.jammy_amd64.deb"
-WKHTMLTOX_URL="https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/$WKHTMLTOX_DEB"
+install -d -m 0755 /usr/share/keyrings
+key_tmp=$(mktemp)
+trap 'rm -f "$key_tmp"' EXIT
+curl --fail --show-error --silent --location https://nginx.org/keys/nginx_signing.key -o "$key_tmp"
+gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg "$key_tmp"
+chmod 0644 /usr/share/keyrings/nginx-archive-keyring.gpg
+printf 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu %s nginx\n' "$VERSION_CODENAME" > /etc/apt/sources.list.d/nginx.list
+cat > /etc/apt/preferences.d/99nginx <<'EOF'
+Package: nginx
+Pin: origin nginx.org
+Pin-Priority: 900
+EOF
+# Refresh successfully before selecting a version; do not use stale indexes
+# when a repository cannot be reached.
+apt-get -o APT::Update::Error-Mode=any update
 
-if [ ! -f "$WKHTMLTOX_DEB" ]; then
-    echo "Downloading $WKHTMLTOX_DEB..."
-    wget -q "$WKHTMLTOX_URL" || true
+# Select the newest package published in the nginx.org STABLE repository for
+# this Ubuntu release and architecture. No release number is hardcoded here.
+# Explicit selection prevents falling back to Ubuntu's distribution package.
+nginx_versions=$(apt-cache madison nginx | awk -F '|' '
+    $3 ~ /https:\/\/nginx[.]org\/packages\/ubuntu[[:space:]]/ {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+        print $2
+    }')
+nginx_version=""
+for version in $nginx_versions; do
+    if [[ -z "$nginx_version" ]] || dpkg --compare-versions "$version" gt "$nginx_version"; then
+        nginx_version="$version"
+    fi
+done
+if [[ -z "$nginx_version" ]]; then
+    echo 'No Nginx stable package found at nginx.org for this host. Installation stopped.' >&2
+    exit 1
 fi
-
-if [ -f "$WKHTMLTOX_DEB" ]; then
-    apt-get install -y ./$WKHTMLTOX_DEB || apt-get install -f -y
-else
-    echo "Falling back to apt repository wkhtmltopdf..."
-    apt-get install -y wkhtmltopdf
+echo "Installing latest nginx.org stable package: $nginx_version"
+apt-get install -y "nginx=$nginx_version"
+installed_version=$(dpkg-query -W -f='${Version}' nginx)
+if [[ "$installed_version" != "$nginx_version" ]]; then
+    echo "Expected Nginx $nginx_version, but found $installed_version." >&2
+    exit 1
 fi
-
-# Link binaries if present in /usr/local/bin
-if [ -f /usr/local/bin/wkhtmltopdf ]; then
-    ln -sf /usr/local/bin/wkhtmltopdf /usr/bin/wkhtmltopdf
-    ln -sf /usr/local/bin/wkhtmltoimage /usr/bin/wkhtmltoimage
-fi
-
-#--------------------------------------------------
-# Install Nginx & Configure Global Websocket Map
-#--------------------------------------------------
-echo -e "\n---- Installing Nginx ----"
-apt-get install -y nginx
-
-# Add global Nginx connection upgrade map for Odoo websockets (prevents duplicate map definitions across multiple instances)
-echo -e "\n---- Setting up global Nginx websocket map configuration ----"
-cat <<'EOF' > /etc/nginx/conf.d/odoo_websocket_map.conf
-# Global Odoo websocket connection upgrade map
+echo "Installed $(nginx -v 2>&1)"
+apt-cache policy nginx
+systemctl enable --now nginx
+nginx -t
+# Add a single global websocket map shared by all instances.
+install -d -m 0755 /etc/nginx/conf.d
+cat > /etc/nginx/conf.d/odoo_websocket_map.conf <<'EOF'
 map $http_upgrade $connection_upgrade {
     default upgrade;
-    ''      close;
+    '' close;
 }
 EOF
-
-systemctl enable nginx
-systemctl restart nginx
-
+nginx -t && systemctl reload nginx
 #--------------------------------------------------
 # Install SSL with certbot
 #--------------------------------------------------
-echo -e "\n---- Installing certbot ----"
-apt-get update -y
-apt-get install -y snapd
-snap install core; snap refresh core
-snap install --classic certbot
-ln -sf /snap/bin/certbot /usr/bin/certbot
-
-echo -e "\n==========================================================="
-echo -e " Server configuration finished successfully!"
-echo -e " You can now run ./odoo_install.sh to install Odoo instances."
-echo -e "==========================================================="
+apt-get install -y certbot python3-certbot-nginx
+echo 'Host ready. Review nginx -v and apt-cache policy nginx.'

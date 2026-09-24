@@ -1,6 +1,6 @@
 #!/bin/bash
 ################################################################################
-# Script for installing Odoo on Ubuntu 20.04, 22.04, and 24.04
+# Script for installing Odoo on Ubuntu 22.04 and 24.04
 # Author: Yenthe Van Ginneken
 # Modified by: Ameer Almughalis
 #-------------------------------------------------------------------------------
@@ -12,7 +12,8 @@
 # sudo ./odoo_install.sh
 ################################################################################
 
-set -eo pipefail
+set -euo pipefail
+umask 027
 
 # Ensure script is run as root
 if [ "$(id -u)" -ne 0 ]; then
@@ -45,16 +46,39 @@ LONGPOLLING_PORT="8072"
 ENABLE_SSL="True"
 # Provide an email to register the SSL certificate
 ADMIN_EMAIL="odoo@example.com"
+# Odoo controls database manager access. Set to False after provisioning a
+# database and configuring db_name/dbfilter for this instance.
+LIST_DB="True"
+INIT_FILE="/etc/systemd/system/${OE_CONFIG}.service"
 
-INIT_FILE=/etc/systemd/system/$OE_CONFIG.service
+if [[ ! "$OE_USER" =~ ^[a-z_][a-z0-9_-]*$ || ! "$OE_VERSION" =~ ^[0-9]+\.0$ || ! "$OE_PORT" =~ ^[0-9]+$ || ! "$LONGPOLLING_PORT" =~ ^[0-9]+$ ]]; then
+    echo 'Invalid instance settings.' >&2; exit 1
+fi
+if (( OE_PORT < 1024 || OE_PORT > 65535 || LONGPOLLING_PORT < 1024 || LONGPOLLING_PORT > 65535 || OE_PORT == LONGPOLLING_PORT )); then
+    echo 'Use distinct unprivileged ports.' >&2; exit 1
+fi
+if [[ "$WEBSITE_NAME" != _ && ! "$WEBSITE_NAME" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+    echo 'WEBSITE_NAME must be a DNS name.' >&2; exit 1
+fi
+if [[ "$INSTALL_NGINX" == True && "$WEBSITE_NAME" == _ ]]; then
+    echo 'Set a unique WEBSITE_NAME for each public instance.' >&2; exit 1
+fi
+if [[ "$INSTALL_NGINX" == True && "$ENABLE_SSL" == True && "$ADMIN_EMAIL" == odoo@example.com ]]; then
+    echo 'Set ADMIN_EMAIL to a real address before enabling SSL.' >&2; exit 1
+fi
+if [[ -e "$INIT_FILE" || -e "/etc/${OE_CONFIG}.conf" || -e "$OE_HOME" ]]; then
+    echo "Instance $OE_CONFIG already exists; refusing to overwrite it." >&2; exit 1
+fi
+if ss -ltnH "( sport = :$OE_PORT or sport = :$LONGPOLLING_PORT )" | grep -q .; then
+    echo 'An Odoo port is already in use.' >&2; exit 1
+fi
+if [[ "$INSTALL_NGINX" == True && -e "/etc/nginx/conf.d/odoo-${OE_CONFIG}.conf" ]]; then
+    echo 'Nginx site already exists.' >&2; exit 1
+fi
 
-# Helper: pip install with optional --break-system-packages (Ubuntu 24.04 / PEP 668)
+# Install packages inside the isolated virtual environment.
 pip_install() {
-  if $OE_HOME_VENV/bin/pip3 help install 2>/dev/null | grep -q -- '--break-system-packages'; then
-    $OE_HOME_VENV/bin/pip3 install --break-system-packages "$@"
-  else
-    $OE_HOME_VENV/bin/pip3 install "$@"
-  fi
+  "$OE_HOME_VENV/bin/pip" install "$@"
 }
 
 # Check Python prerequisites
@@ -68,8 +92,8 @@ systemctl start postgresql
 
 echo -e "\n---- Checking / Creating PostgreSQL User ----"
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$OE_USER'" | grep -q 1; then
-    echo "Creating PostgreSQL superuser role: $OE_USER"
-    sudo -u postgres createuser -s "$OE_USER"
+    echo "Creating PostgreSQL role: $OE_USER"
+    sudo -u postgres createuser --createdb --no-superuser --no-createrole "$OE_USER"
 else
     echo "PostgreSQL user role '$OE_USER' already exists."
 fi
@@ -87,13 +111,14 @@ python3 -m venv "$OE_HOME_VENV"
 pip_install wheel
 
 echo -e "\n---- Install Odoo Python Requirements ----"
-pip_install -r "https://github.com/odoo/odoo/raw/${OE_VERSION}/requirements.txt" || true
+curl --fail --show-error --silent --location "https://raw.githubusercontent.com/odoo/odoo/${OE_VERSION}/requirements.txt" -o "$OE_HOME/requirements.txt"
+pip_install -r "$OE_HOME/requirements.txt"
 
 echo -e "\n---- Create Log directory ----"
 mkdir -p "/var/log/$OE_USER"
 chown -R "$OE_USER:$OE_USER" "/var/log/$OE_USER"
 
-echo -e "\n---- Configure Log Rotation (30 Days Retention) ----"
+echo -e "\n---- Configure automatic Odoo log rotation (30 daily files) ----"
 cat <<EOF > "/etc/logrotate.d/${OE_CONFIG}"
 /var/log/${OE_USER}/${OE_CONFIG}.log {
     daily
@@ -113,7 +138,7 @@ chmod 644 "/etc/logrotate.d/${OE_CONFIG}"
 echo -e "\n==== Installing ODOO Server Core ===="
 if [ -d "$OE_HOME_SERVER" ]; then
     echo "Directory $OE_HOME_SERVER already exists. Updating source..."
-    git -C "$OE_HOME_SERVER" pull || true
+    git -C "$OE_HOME_SERVER" pull --ff-only
 else
     git clone --depth 1 --branch "$OE_VERSION" https://www.github.com/odoo/odoo "$OE_HOME_SERVER"
 fi
@@ -124,7 +149,7 @@ if [ "$IS_ENTERPRISE" = "True" ]; then
     
     mkdir -p "$OE_HOME/enterprise/addons"
     if [ -d "$OE_HOME/enterprise/addons/.git" ]; then
-        git -C "$OE_HOME/enterprise/addons" pull || true
+        git -C "$OE_HOME/enterprise/addons" pull --ff-only
     else
         git clone --depth 1 --branch "$OE_VERSION" https://www.github.com/odoo/enterprise "$OE_HOME/enterprise/addons"
     fi
@@ -143,7 +168,7 @@ chown -R "$OE_USER:$OE_USER" "$OE_HOME"
 echo -e "\n---- Creating Server Config File ----"
 if [ "$GENERATE_RANDOM_PASSWORD" = "True" ]; then
     echo "* Generating random superadmin password..."
-    OE_SUPERADMIN=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16 || true)
+    OE_SUPERADMIN=$(openssl rand -hex 24)
 fi
 
 # Build correct addons path
@@ -158,9 +183,14 @@ cat <<EOF > "/etc/${OE_CONFIG}.conf"
 ; This is the password that allows database operations:
 admin_passwd = ${OE_SUPERADMIN}
 http_port = ${OE_PORT}
+http_interface = 127.0.0.1
+workers = 2
+max_cron_threads = 1
+gevent_port = ${LONGPOLLING_PORT}
 longpolling_port = ${LONGPOLLING_PORT}
 logfile = /var/log/${OE_USER}/${OE_CONFIG}.log
 addons_path = ${ADDONS_PATH}
+list_db = ${LIST_DB}
 EOF
 
 if [ "$INSTALL_NGINX" = "True" ]; then
@@ -175,7 +205,7 @@ chmod 640 "/etc/${OE_CONFIG}.conf"
 #--------------------------------------------------
 echo -e "\n---- Creating start.sh helper ----"
 cat <<EOF > "$OE_HOME_SERVER/start.sh"
-#!/bin/bin
+#!/bin/sh
 sudo -u $OE_USER $OE_HOME_VENV/bin/python3 $OE_HOME_SERVER/odoo-bin -c /etc/${OE_CONFIG}.conf
 EOF
 chmod 755 "$OE_HOME_SERVER/start.sh"
@@ -196,6 +226,11 @@ Type=simple
 PermissionsStartOnly=true
 User=$OE_USER
 Group=$OE_USER
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ReadWritePaths=$OE_HOME /var/log/$OE_USER
 SyslogIdentifier=$OE_CONFIG
 ExecStart=$OE_HOME_VENV/bin/python3 $OE_HOME_SERVER/odoo-bin -c /etc/$OE_CONFIG.conf
 StandardOutput=journal+console
@@ -215,10 +250,26 @@ echo -e "\n---- Starting ODOO Service ----"
 systemctl restart "$OE_CONFIG.service"
 
 #--------------------------------------------------
-# Configure Nginx (Official Odoo 19 Configuration)
+# Configure Nginx reverse proxy for this Odoo instance
 #--------------------------------------------------
 if [ "$INSTALL_NGINX" = "True" ]; then
     echo -e "\n---- Configuring Nginx ----"
+    # Keep each instance's Nginx logs in its own directory, outside the
+    # distribution's /var/log/nginx/*.log rotation rule.
+    install -d -m 0755 "/var/log/nginx/odoo-${OE_CONFIG}"
+    # Add this instance's access and error logs to logrotate as well.
+    cat <<EOF >> "/etc/logrotate.d/${OE_CONFIG}"
+/var/log/nginx/odoo-${OE_CONFIG}/access.log /var/log/nginx/odoo-${OE_CONFIG}/error.log {
+    daily
+    rotate 30
+    copytruncate
+    delaycompress
+    compress
+    notifempty
+    missingok
+}
+EOF
+    logrotate --debug "/etc/logrotate.d/${OE_CONFIG}" >/dev/null
     
     # Ensure global websocket map exists in conf.d
     mkdir -p /etc/nginx/conf.d
@@ -239,8 +290,8 @@ EOF
         SERVER_DOMAIN="$WEBSITE_NAME"
     fi
 
-    # Create multi-instance safe Nginx site config with official Odoo 19 structure
-    cat <<EOF > "/etc/nginx/sites-available/$NGINX_SITE"
+    # Create instance-specific Nginx site.
+    cat <<EOF > "/etc/nginx/conf.d/odoo-${OE_CONFIG}.conf"
 # Odoo Server Upstreams (Instance-specific to support multi-instance)
 upstream odoo_${OE_CONFIG} {
     server 127.0.0.1:${OE_PORT};
@@ -252,10 +303,12 @@ upstream odoochat_${OE_CONFIG} {
 server {
     listen 80;
     server_name ${SERVER_DOMAIN};
+    server_tokens off;
+    client_max_body_size 100m;
 
     # Log files
-    access_log /var/log/nginx/${OE_USER}-access.log;
-    error_log /var/log/nginx/${OE_USER}-error.log;
+    access_log /var/log/nginx/odoo-${OE_CONFIG}/access.log;
+    error_log /var/log/nginx/odoo-${OE_CONFIG}/error.log;
 
     # Timeouts
     proxy_read_timeout 720s;
@@ -295,22 +348,19 @@ server {
 }
 EOF
 
-    # Enable Nginx site
-    mkdir -p /etc/nginx/sites-enabled
-    ln -sf "/etc/nginx/sites-available/$NGINX_SITE" "/etc/nginx/sites-enabled/$NGINX_SITE"
-    rm -f /etc/nginx/sites-enabled/default
+    # nginx.org packages include conf.d directly.
 
     if nginx -t; then
         systemctl reload nginx
-        echo "Nginx configured successfully at /etc/nginx/sites-available/$NGINX_SITE"
+        echo "Nginx configured successfully at /etc/nginx/conf.d/odoo-${OE_CONFIG}.conf"
     else
-        echo "Warning: Nginx configuration check failed." >&2
+        echo "Nginx configuration check failed." >&2; exit 1
     fi
 
     # Certbot SSL Setup
     if [ "$ENABLE_SSL" = "True" ] && [ "$ADMIN_EMAIL" != "odoo@example.com" ] && [ "$WEBSITE_NAME" != "_" ]; then
         echo -e "\n---- Enabling SSL with Certbot ----"
-        certbot --nginx -d "$WEBSITE_NAME" --noninteractive --agree-tos --email "$ADMIN_EMAIL" --redirect || true
+        certbot --nginx -d "$WEBSITE_NAME" --noninteractive --agree-tos --email "$ADMIN_EMAIL" --redirect
         systemctl reload nginx
     fi
 fi
@@ -335,6 +385,6 @@ echo -e " Start Command: systemctl start $OE_CONFIG.service"
 echo -e " Stop Command: systemctl stop $OE_CONFIG.service"
 echo -e " Restart Command: systemctl restart $OE_CONFIG.service"
 if [ "$INSTALL_NGINX" = "True" ]; then
-    echo -e " Nginx Config File: /etc/nginx/sites-available/$NGINX_SITE"
+    echo -e " Nginx Config File: /etc/nginx/conf.d/odoo-${OE_CONFIG}.conf"
 fi
 echo -e "-----------------------------------------------------------"
